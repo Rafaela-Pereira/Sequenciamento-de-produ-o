@@ -1,0 +1,134 @@
+library(stringr)
+library(reshape2)
+library(ggplot2)
+
+MP<-as.matrix(read.table("matrizTempoProcessamento.txt",sep=";"))          #matriz de tempo de produção
+
+m<-dim(MP)[1]      #m : ordens de produção (tarefas)
+n<-dim(MP)[2]      #n máquinas
+
+
+#------------------------------------------------------------
+#Função objetivo-Makespan
+#----------------------------------------------------------
+ValorFuncaoObjetivo<-function(sequencia)
+{
+  MP<-MP[sequencia,]  
+  matrizInicio<-matrix(0,length(sequencia),n)   
+  for(j in 1:n)  
+  {
+    for(i in 1:m)
+    {
+      ifelse(i==1 & j==1, matrizInicio[i,j]<-0, 
+             ifelse(j==1, matrizInicio[i,j]<-matrizInicio[i-1,j]+MP[i-1,j],
+                    matrizInicio[i,j]<-max(c(matrizInicio[i,j-1]+MP[i,j-1],matrizInicio[i-1,j]+MP[i-1,j]))))
+    }
+  }
+  matrizTermino<-matrizInicio+MP
+  return(max(matrizTermino))
+}
+
+#-----------------------------------------------------------
+# Primeiro método heurístico com escolha da sequencia por sorteio
+#------------------------------------------------------------
+NumeroAmostras<-1000
+sequenciaAleatoria<-matrix(0,NumeroAmostras,m)
+makespan<-c()
+m.makespan<-999999           #melhor makespan
+set.seed(1)
+for(c in 1:NumeroAmostras)          
+{
+sequenciaAleatoria[c,]<-sample(1:m)
+makespan[c]<-ValorFuncaoObjetivo(sequenciaAleatoria[c,])
+ifelse(m.makespan > min(makespan),m.makespan<-min(makespan),NA) #melhor makespan
+c=c+1
+}
+
+m.sequencia<-sequenciaAleatoria[match(m.makespan,makespan),]        #Resultado: sequencia do melhor makespan
+
+str_c("O melhor makespan encontrado foi de: ", m.makespan,",",  "na sequência: ",      #Resultado final
+      paste(m.sequencia,collapse ="-"))
+ 
+ ##########################################################################
+#      BUSCA TABU    :D
+##########################################################################
+SolucaoAtual<-c(m.makespan,m.sequencia)
+maxIteracoes<-50
+MatrizTabu<-matrix(0,nrow=m,ncol=m)
+MelhorVizinho<-SolucaoAtual
+numeroTabu<-20
+
+for(k in 1:maxIteracoes)
+{
+for(i in 1:(m-1))
+  {  
+for(j in (i+1):m)            #primeiro acha o melhor vizinho
+    {  
+  vizinhoCandidato<-SolucaoAtual
+  if(MatrizTabu[i,j]==0){
+  vizinhoCandidato[c(i+1,j+1)]<-SolucaoAtual[c(j+1,i+1)]
+  z<-ValorFuncaoObjetivo(vizinhoCandidato[2:(m+1)])
+  if(z <= MelhorVizinho[1]){MelhorVizinho<-c(z,vizinhoCandidato[2:(m+1)])}}
+ 
+    }
+  }                     
+for(i in 1:m)                #atualiza lista Tabu
+ {
+  for(j in (i+1):m) 
+   {
+    ifelse(MelhorVizinho[i+1]==SolucaoAtual[j+1],MatrizTabu[i,j]<-numeroTabu,
+           ifelse(MatrizTabu[i,j]!=0,MatrizTabu[i,j]<-MatrizTabu[i,j]-1,
+                  MatrizTabu[i,j]<-0))
+   }
+  }
+   if(MelhorVizinho[1]<= SolucaoAtual[1]){MelhorSolucao<-MelhorVizinho}          #atualiza solução atual
+    SolucaoAtual<-MelhorVizinho
+    k=k+1
+}  
+
+str_c("O melhor makespan encontrado foi de: ", MelhorSolucao[1],",",  "na sequência: ",
+      paste(MelhorSolucao[-1],collapse =","))                                        #Resultado da busca Tabu
+      
+#---------------------------------------------------------------
+#        Gráfico para o melhor resultado encontrado com a busca Tabu -Diagrama de Gantt
+#----------------------------------------------------------------
+SolucaoDoProblema<-function(sequencia)
+{
+  MP<-MP[sequencia,]  
+  matrizInicio<-matrix(0,length(sequencia),n)   
+  for(j in 1:n)  
+  {
+    for(i in 1:m)
+    {
+      ifelse(i==1 & j==1, matrizInicio[i,j]<-0, 
+             ifelse(j==1, matrizInicio[i,j]<-matrizInicio[i-1,j]+MP[i-1,j],
+                    matrizInicio[i,j]<-max(c(matrizInicio[i,j-1]+MP[i,j-1],matrizInicio[i-1,j]+MP[i-1,j])) ))
+    }
+  }
+  matrizTermino<-matrizInicio+MP
+  return(list(max(matrizTermino), matrizInicio,matrizTermino))
+}
+
+
+matrizTempoFinal<-as.matrix(SolucaoDoProblema(SolucaoAtual[2:23])[[3]])
+matrizTempoInicial<-as.matrix(SolucaoDoProblema(SolucaoAtual[2:23])[[2]])   
+
+
+Resultados<-data.frame(name =factor(c(rep("Máquina 1",m),rep("Máquina 2",m),rep("Máquina 3",m),
+                               rep("Máquina 4",m), rep("Máquina 5",m))),
+                inicio=as.vector(matrizTempoInicial), 
+                termino=as.vector(matrizTempoFinal),
+                Tarefas=rep(c(paste("Tar",1:m)),5))
+
+ResultadosOrganizados<-melt(Resutados, measure.vars = c("inicio", "termino"))
+
+ggplot(ResultadosOrganizados, aes(value, name, colour = Tarefas)) +        #gráfico
+  geom_line(size = 6) +
+  xlab("Tempo de processamento") + 
+  ylab(NULL) +
+  theme(axis.title.x = element_text(size=16),
+        axis.text.x  = element_text(size=16),axis.text.y = element_text(size=16),
+        legend.text = element_text(size = 16),legend.title=element_text(size=16))+
+  scale_y_discrete(limits = c("Máquina 5", "Máquina 4", "Máquina 3","Máquina 2","Máquina 1"))+
+  scale_colour_hue(breaks=c( paste("Tar",1:m))) #legenda    
+
